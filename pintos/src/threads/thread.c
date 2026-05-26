@@ -119,9 +119,10 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
-  /* Çocuğu ebeveynin listesine ekle */
 #ifdef USERPROG
+
   struct thread *parent = thread_current ();
+  t->parent = parent;
   list_push_back (&parent->children, &t->child_elem);
 #endif
 
@@ -270,11 +271,6 @@ thread_get_recent_cpu (void)
   return 0;
 }
 
-/* -------------------------------------------------------
-   DÜZELTME: process.c'nin ihtiyaç duyduğu fonksiyon.
-   all_list üzerinde dolaşarak verilen tid'ye sahip
-   thread'i bulur ve döndürür. Bulamazsa NULL döner.
-   ------------------------------------------------------- */
 struct thread *
 get_thread_by_tid (tid_t tid)
 {
@@ -357,14 +353,16 @@ init_thread (struct thread *t, const char *name, int priority)
 
 #ifdef USERPROG
   list_init (&t->open_files);
-  t->next_fd = 2;
+  t->next_fd = 2;           /* 0=stdin, 1=stdout rezerve */
 
   list_init (&t->children);
+  t->parent = NULL;         /* thread_create'de set edilecek */
   sema_init (&t->wait_sema, 0);
   sema_init (&t->die_sema, 0);
   sema_init (&t->load_sema, 0);
   t->exit_status = -1;
   t->load_success = false;
+  t->waited = false;      
 #endif
 }
 
