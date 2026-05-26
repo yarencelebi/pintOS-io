@@ -7,7 +7,7 @@
 #include "threads/synch.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
-#include <malloc.h>
+#include "threads/malloc.h"
 #include "devices/input.h"
 #include "devices/shutdown.h"
 #include "userprog/process.h"
