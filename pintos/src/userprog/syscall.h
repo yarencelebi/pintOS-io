@@ -2,6 +2,7 @@
 #define USERPROG_SYSCALL_H
 
 #include <list.h>
+#include <debug.h>
 #include "filesys/file.h"
 
 /* Açık dosya kaydı — her thread kendi listesini tutar */
