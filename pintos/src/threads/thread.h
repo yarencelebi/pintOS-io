@@ -1,3 +1,5 @@
+/* ========================= threads/thread.h ========================= */
+
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
@@ -33,13 +35,14 @@ struct thread
   int priority;
   int base_priority;
 
+  int64_t wakeup_tick;
+
   struct lock *waiting_lock;
 
   struct list donations;
   struct list_elem donation_elem;
 
   struct list_elem allelem;
-
   struct list_elem elem;
 
 #ifdef USERPROG
@@ -66,6 +69,8 @@ struct thread
 extern bool thread_mlfqs;
 extern struct list ready_list;
 
+extern uint32_t thread_stack_ofs;
+
 bool thread_priority_greater (const struct list_elem *a,
                               const struct list_elem *b,
                               void *aux);
@@ -77,30 +82,44 @@ void thread_tick (void);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);
-tid_t thread_create (const char *name, int priority,
-                     thread_func *, void *);
+
+tid_t thread_create (const char *name,
+                     int priority,
+                     thread_func *,
+                     void *);
 
 void thread_block (void);
 void thread_unblock (struct thread *);
 
+void thread_sleep (int64_t ticks);
+void thread_wake (int64_t ticks);
+
 struct thread *thread_current (void);
+
 tid_t thread_tid (void);
+
 const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
+
 void thread_yield (void);
 
 struct thread *get_thread_by_tid (tid_t tid);
 
 typedef void thread_action_func (struct thread *t, void *aux);
+
 void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
+
 void thread_set_priority (int);
 
 int thread_get_nice (void);
+
 void thread_set_nice (int);
+
 int thread_get_recent_cpu (void);
+
 int thread_get_load_avg (void);
 
 #endif /* threads/thread.h */
