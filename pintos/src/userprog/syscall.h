@@ -5,13 +5,7 @@
 #include <debug.h>
 #include "filesys/file.h"
 
-/* Açık dosya kaydı — her thread kendi listesini tutar */
-struct file_descriptor
-  {
-    int fd;
-    struct file *file;
-    struct list_elem elem;
-  };
+
 
 extern struct lock filesys_lock;
 
