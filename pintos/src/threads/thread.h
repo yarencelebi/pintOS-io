@@ -1,5 +1,3 @@
-/* ========================= threads/thread.h ========================= */
-
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
@@ -7,8 +5,9 @@
 #include <list.h>
 #include <stdint.h>
 
-#include "threads/synch.h"
-#include "lib/kernel/list.h"
+/* synch.h buraya DAHIL EDİLMİYOR — döngüsel bağımlılığı kırmak için
+   struct lock forward-declare edilir. */
+struct lock;
 
 enum thread_status
 {
@@ -68,11 +67,8 @@ struct thread
 };
 
 extern bool thread_mlfqs;
-
-/* READY LIST görünürlüğü */
 extern struct list ready_list;
 
-/* PRIORITY COMPARATOR */
 bool thread_priority_greater (const struct list_elem *a,
                               const struct list_elem *b,
                               void *aux);
