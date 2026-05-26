@@ -17,12 +17,16 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-#include "userprog/syscall.h"
+#include "threads/malloc.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool push_arguments (void **esp, const char *cmdline);
 
-
+/* Starts a new thread running a user program loaded from
+   FILENAME.  The new thread may be scheduled (and may even exit)
+   before process_execute() returns.  Returns the new process's
+   thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
 process_execute (const char *file_name) 
 {
@@ -30,18 +34,27 @@ process_execute (const char *file_name)
   tid_t tid;
   struct thread *cur = thread_current ();
 
+  /* file_name için kernel sayfası ayır */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
-  /* Sadece program adını thread ismi olarak geç (argümanlar hariç) */
-  char name_copy[16];
-  strlcpy (name_copy, file_name, sizeof name_copy);
+  /* Thread ismi için sadece ilk kelimeyi (program adını) güvenli parse et */
+  char *name_copy = palloc_get_page (0);
+  if (name_copy == NULL)
+    {
+      palloc_free_page (fn_copy);
+      return TID_ERROR;
+    }
+  strlcpy (name_copy, file_name, PGSIZE);
   char *save_ptr;
   char *prog_name = strtok_r (name_copy, " ", &save_ptr);
 
+  /* Yeni child thread'i oluştur */
   tid = thread_create (prog_name, PRI_DEFAULT, start_process, fn_copy);
+
+  palloc_free_page (name_copy);
 
   if (tid == TID_ERROR)
     {
@@ -49,15 +62,17 @@ process_execute (const char *file_name)
       return TID_ERROR;
     }
 
-
+  /* Child process'in load () fonksiyonunu tamamlamasını bekle */
   sema_down (&cur->load_sema);
 
+  /* Eğer yükleme başarısız olduysa hata döndür */
   if (!cur->load_success)
     return TID_ERROR;
 
   return tid;
 }
 
+/* A thread function that loads a user process and starts it running. */
 static void
 start_process (void *file_name_)
 {
@@ -66,13 +81,16 @@ start_process (void *file_name_)
   bool success;
   struct thread *cur = thread_current ();
 
+  /* Kesme çerçevesini ilk değerlerine ata */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
+  
+  /* Programı yükle ve stack'i kur */
   success = load (file_name, &if_.eip, &if_.esp);
 
-
+  /* Parent'a yükleme durumunu bildir */
   if (cur->parent != NULL)
     {
       cur->parent->load_success = success;
@@ -81,15 +99,16 @@ start_process (void *file_name_)
 
   palloc_free_page (file_name);
 
+  /* Yükleme başarısızsa çıkış yap */
   if (!success)
     thread_exit ();
 
+  /* Kullanıcı moduna atla */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
 }
 
-
-
+/* Waits for a child process to die and returns its exit status. */
 int
 process_wait (tid_t child_tid) 
 {
@@ -97,6 +116,7 @@ process_wait (tid_t child_tid)
   struct list_elem *e;
   struct thread *child = NULL;
 
+  /* Aktif çocukların listesinde ara */
   for (e = list_begin (&cur->children);
        e != list_end (&cur->children);
        e = list_next (e))
@@ -109,53 +129,59 @@ process_wait (tid_t child_tid)
         }
     }
 
-  /* Bulunamadı veya zaten wait edildi */
+  /* Çocuk bulunamadıysa veya zaten wait edildiyse -1 dön */
   if (child == NULL || child->waited)
     return -1;
 
   child->waited = true;
 
-  /* Child exit olana kadar bekle */
+  /* Çocuk process exit_status'ünü belirleyip ölene kadar bloklan */
   sema_down (&child->wait_sema);
 
   int status = child->exit_status;
 
-  /* Child struct'ının serbest kalmasına izin ver */
+  /* Çocuğu listeden kaldır ve child struct'ının yok edilmesine izin ver */
   list_remove (&child->child_elem);
   sema_up (&child->die_sema);
 
   return status;
 }
 
-
+/* Free the current process's resources. */
 void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  /* İstenen standart exit çıktısını yazdır */
   printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
 
-  /* Açık dosyaları kapat */
+  /* Bu process'e ait tüm açık dosya descriptor'larını güvenle kapat */
   struct list_elem *e;
   while (!list_empty (&cur->open_files))
     {
       e = list_pop_front (&cur->open_files);
-      struct file_descriptor *fd_entry =
-          list_entry (e, struct file_descriptor, elem);
+      struct file_descriptor *fd_entry = list_entry (e, struct file_descriptor, elem);
       file_close (fd_entry->file);
       free (fd_entry);
     }
 
-  /*
-   * Parent'ı uyandır. Eğer parent yoksa veya parent zaten ölmüşse
-   * (wait_sema'yı kimse beklemiyor) die_sema'yı beklemeden geç.
-   */
+  /* ROX Testleri için: Çalıştırılabilir dosyanın üzerindeki kilidi kaldır ve kapat */
+  if (cur->executable_file != NULL)
+    {
+      file_allow_write (cur->executable_file);
+      file_close (cur->executable_file);
+    }
+
+  /* Parent'ı uyandır (Eğer üst süreç process_wait içinde bekliyorsa) */
   sema_up (&cur->wait_sema);
 
+  /* Parent sürecin bu child'ın exit status'ünü okuduğundan emin olana kadar bekle */
   if (cur->parent != NULL)
-    sema_down (&cur->die_sema);   /* Parent list_remove + sema_up yapana kadar bekle */
+    sema_down (&cur->die_sema); 
 
+  /* Sayfa dizinini (Page Directory) imha et */
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -165,6 +191,7 @@ process_exit (void)
     }
 }
 
+/* Sets up the CPU for running user code in the current thread. */
 void
 process_activate (void)
 {
@@ -225,12 +252,13 @@ struct Elf32_Phdr
 #define PF_W 2
 #define PF_R 4
 
-static bool setup_stack (void **esp, char *file_name);
+static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
+/* ELF binary yükleyici ana fonksiyonu */
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
@@ -241,20 +269,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
   bool success = false;
   int i;
 
-  /*
-   * FIX: Argümanları parse et. file_name "prog arg1 arg2" formatında
-   * gelebilir; sadece ilk token'ı dosya adı olarak kullan.
-   */
-  char fn_copy[256];
-  strlcpy (fn_copy, file_name, sizeof fn_copy);
+  /* Komut satırını parse etmek için geçici kopya al */
+  char *fn_copy = palloc_get_page (0);
+  if (fn_copy == NULL) 
+    goto done;
+  strlcpy (fn_copy, file_name, PGSIZE);
+
   char *save_ptr;
   char *prog_name = strtok_r (fn_copy, " ", &save_ptr);
 
+  /* Page directory oluştur */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
 
+  /* Dosyayı aç */
   file = filesys_open (prog_name);
   if (file == NULL) 
     {
@@ -262,6 +292,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done; 
     }
 
+  /* ROX testleri için: Dosya yürütülürken yazılmasını engelle */
+  file_deny_write (file);
+  t->executable_file = file;
+
+  /* ELF başlığını doğrula */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
       || ehdr.e_type != 2
@@ -274,6 +309,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done; 
     }
 
+  /* Segmentleri oku ve yükle */
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
     {
@@ -327,15 +363,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
         }
     }
 
+  /* Kullanıcı Stack'ini kur */
+  if (!setup_stack (esp))
+    goto done;
 
-  if (!setup_stack (esp, (char *) file_name))
+  /* Entegre Argüman Geçirme: x86 calling convention yerleşimi */
+  if (!push_arguments (esp, file_name))
     goto done;
 
   *eip = (void (*) (void)) ehdr.e_entry;
   success = true;
 
  done:
-  file_close (file);
+  palloc_free_page (fn_copy);
+  /* Başarısızlık durumunda dosyayı kapat, başarı durumunda process_exit kapatacak */
+  if (!success && file != NULL)
+    file_close (file);
   return success;
 }
 
@@ -401,84 +444,78 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   return true;
 }
 
-
 static bool
-setup_stack (void **esp, char *file_name)
+setup_stack (void **esp)
 {
   uint8_t *kpage;
   bool success = false;
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage == NULL)
-    return false;
-
-  success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-  if (!success)
+  if (kpage != NULL)
     {
-      palloc_free_page (kpage);
-      return false;
+      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+      if (success)
+        *esp = PHYS_BASE; 
+      else
+        palloc_free_page (kpage);
     }
+  return success;
+}
 
-  *esp = PHYS_BASE;
+/* Arkadaşının optimize edilmiş x86 stack layout fonksiyonu */
+static bool
+push_arguments (void **esp, const char *cmdline)
+{
+  char *cmd_copy = palloc_get_page (0);
+  if (cmd_copy == NULL)
+    return false;
+  strlcpy (cmd_copy, cmdline, PGSIZE);
 
-  /* --- Argümanları parse et ve stack'e yerleştir --- */
-
-  /* Argüman string ve pointer'larını tutmak için geçici diziler */
   char *argv[128];
   int argc = 0;
-
-  /* file_name'i kopyala (strtok_r bozuyor) */
-  char fn_buf[256];
-  strlcpy (fn_buf, file_name, sizeof fn_buf);
-
   char *token, *save_ptr;
-  for (token = strtok_r (fn_buf, " ", &save_ptr);
-       token != NULL && argc < 127;
+
+  for (token = strtok_r (cmd_copy, " ", &save_ptr);
+       token != NULL;
        token = strtok_r (NULL, " ", &save_ptr))
     {
       argv[argc++] = token;
+      if (argc >= 128)
+        break;
     }
 
-  /* 1) Stringleri stack'e push et (PHYS_BASE'den aşağı doğru) */
-  char *arg_ptrs[128];  /* stack üzerindeki adresleri tut */
+  char *arg_ptrs[128];
   int i;
   for (i = argc - 1; i >= 0; i--)
     {
-      size_t len = strlen (argv[i]) + 1;  /* null terminator dahil */
+      size_t len = strlen (argv[i]) + 1;
       *esp -= len;
       memcpy (*esp, argv[i], len);
-      arg_ptrs[i] = (char *) *esp;
+      arg_ptrs[i] = *esp;
     }
 
-  /* 2) Word-align: esp'yi 4'ün katına hizala */
-  uintptr_t esp_val = (uintptr_t) *esp;
-  esp_val &= ~(uintptr_t) 3;
-  *esp = (void *) esp_val;
+  *esp = (void *) ((uintptr_t)*esp & ~3);
 
-  /* 3) NULL sentinel: argv[argc] = NULL */
   *esp -= sizeof (char *);
-  *(char **) *esp = NULL;
+  *(char **)*esp = NULL;
 
-  /* 4) argv pointer'larını ters sırada push et (argv[argc-1] → argv[0]) */
   for (i = argc - 1; i >= 0; i--)
     {
       *esp -= sizeof (char *);
-      *(char **) *esp = arg_ptrs[i];
+      *(char **)*esp = arg_ptrs[i];
     }
 
-  /* 5) argv'nin kendisini push et (argv[0]'ın adresi) */
-  char **argv_ptr = (char **) *esp;
+  char **argv_on_stack = (char **)*esp;
   *esp -= sizeof (char **);
-  *(char ***) *esp = argv_ptr;
+  *(char ***)*esp = argv_on_stack;
 
-  /* 6) argc'yi push et */
   *esp -= sizeof (int);
-  *(int *) *esp = argc;
+  *(int *)*esp = argc;
 
-  /* 7) Sahte return address push et */
   *esp -= sizeof (void *);
-  *(void **) *esp = NULL;
+  *(void **)*esp = NULL;
 
+  palloc_free_page (cmd_copy);
   return true;
 }
 
