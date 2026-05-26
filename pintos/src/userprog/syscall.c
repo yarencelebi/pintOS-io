@@ -122,8 +122,14 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f)
 {
+  // Stack pointer'ın kendisi geçerli bir kullanıcı adresinde mi kontrol et
   check_user_address (f->esp);
-  int syscall_nr = *(int *) (f->esp);
+  
+  // Stack'i güvenle ve kayma riski olmadan okumak için dizi mantığına (int *) alıyoruz
+  int *args = (int *) f->esp;
+
+  // args[0] her zaman sistem çağrısı numarasını (syscall_nr) verir
+  int syscall_nr = args[0];
 
   switch (syscall_nr)
     {
@@ -135,8 +141,8 @@ syscall_handler (struct intr_frame *f)
     /* ── EXIT ──────────────────────────────────────────────── */
     case SYS_EXIT:
       {
-        check_user_address ((int *) f->esp + 1);
-        int status = *((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        int status = args[1];
         exit (status);
         break;
       }
@@ -144,8 +150,8 @@ syscall_handler (struct intr_frame *f)
     /* ── EXEC ──────────────────────────────────────────────── */
     case SYS_EXEC:
       {
-        check_user_address ((int *) f->esp + 1);
-        const char *cmd = *(const char **) ((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        const char *cmd = (const char *) args[1];
         check_user_string (cmd);
         f->eax = (uint32_t) process_execute (cmd);
         break;
@@ -154,8 +160,8 @@ syscall_handler (struct intr_frame *f)
     /* ── WAIT ──────────────────────────────────────────────── */
     case SYS_WAIT:
       {
-        check_user_address ((int *) f->esp + 1);
-        tid_t pid = *((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        tid_t pid = (tid_t) args[1];
         f->eax = (uint32_t) process_wait (pid);
         break;
       }
@@ -163,10 +169,10 @@ syscall_handler (struct intr_frame *f)
     /* ── CREATE ────────────────────────────────────────────── */
     case SYS_CREATE:
       {
-        check_user_address ((int *) f->esp + 1);
-        check_user_address ((int *) f->esp + 2);
-        const char *name     = *(const char **) ((int *) f->esp + 1);
-        unsigned initial_size = *((unsigned *) f->esp + 2);
+        check_user_address (&args[1]);
+        check_user_address (&args[2]);
+        const char *name     = (const char *) args[1];
+        unsigned initial_size = (unsigned) args[2];
         check_user_string (name);
         lock_acquire (&filesys_lock);
         f->eax = (uint32_t) filesys_create (name, initial_size);
@@ -177,8 +183,8 @@ syscall_handler (struct intr_frame *f)
     /* ── REMOVE ────────────────────────────────────────────── */
     case SYS_REMOVE:
       {
-        check_user_address ((int *) f->esp + 1);
-        const char *name = *(const char **) ((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        const char *name = (const char *) args[1];
         check_user_string (name);
         lock_acquire (&filesys_lock);
         f->eax = (uint32_t) filesys_remove (name);
@@ -189,8 +195,8 @@ syscall_handler (struct intr_frame *f)
     /* ── OPEN ──────────────────────────────────────────────── */
     case SYS_OPEN:
       {
-        check_user_address ((int *) f->esp + 1);
-        const char *name = *(const char **) ((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        const char *name = (const char *) args[1];
         check_user_string (name);
         lock_acquire (&filesys_lock);
         struct file *fp = filesys_open (name);
@@ -203,8 +209,8 @@ syscall_handler (struct intr_frame *f)
     /* ── FILESIZE ───────────────────────────────────────────── */
     case SYS_FILESIZE:
       {
-        check_user_address ((int *) f->esp + 1);
-        int fd = *((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        int fd = args[1];
         struct file *fp = get_file_from_fd (fd);
         if (fp == NULL)
           { f->eax = (uint32_t) -1; break; }
@@ -217,12 +223,12 @@ syscall_handler (struct intr_frame *f)
     /* ── READ ───────────────────────────────────────────────── */
     case SYS_READ:
       {
-        check_user_address ((int *) f->esp + 1);
-        check_user_address ((int *) f->esp + 2);
-        check_user_address ((int *) f->esp + 3);
-        int      fd   = *((int *)      f->esp + 1);
-        char    *buf  = *(char **)    ((int *) f->esp + 2);
-        unsigned size = *((unsigned *) f->esp + 3);
+        check_user_address (&args[1]);
+        check_user_address (&args[2]);
+        check_user_address (&args[3]);
+        int      fd   = args[1];
+        char    *buf  = (char *) args[2];
+        unsigned size = (unsigned) args[3];
         check_user_buffer (buf, size);
 
         if (fd == 0)
@@ -246,12 +252,12 @@ syscall_handler (struct intr_frame *f)
     /* ── WRITE ──────────────────────────────────────────────── */
     case SYS_WRITE:
       {
-        check_user_address ((int *) f->esp + 1);
-        check_user_address ((int *) f->esp + 2);
-        check_user_address ((int *) f->esp + 3);
-        int      fd   = *((int *)      f->esp + 1);
-        void    *buf  = *(void **)    ((int *) f->esp + 2);
-        unsigned size = *((unsigned *) f->esp + 3);
+        check_user_address (&args[1]);
+        check_user_address (&args[2]);
+        check_user_address (&args[3]);
+        int      fd   = args[1];
+        void    *buf  = (void *) args[2];
+        unsigned size = (unsigned) args[3];
         check_user_buffer (buf, size);
 
         if (fd == 1)
@@ -274,10 +280,10 @@ syscall_handler (struct intr_frame *f)
     /* ── SEEK ───────────────────────────────────────────────── */
     case SYS_SEEK:
       {
-        check_user_address ((int *) f->esp + 1);
-        check_user_address ((int *) f->esp + 2);
-        int      fd       = *((int *)      f->esp + 1);
-        unsigned position = *((unsigned *) f->esp + 2);
+        check_user_address (&args[1]);
+        check_user_address (&args[2]);
+        int      fd       = args[1];
+        unsigned position = (unsigned) args[2];
         struct file *fp = get_file_from_fd (fd);
         if (fp == NULL) break;
         lock_acquire (&filesys_lock);
@@ -289,8 +295,8 @@ syscall_handler (struct intr_frame *f)
     /* ── TELL ───────────────────────────────────────────────── */
     case SYS_TELL:
       {
-        check_user_address ((int *) f->esp + 1);
-        int fd = *((int *) f->esp + 1);
+        check_user_address (&args[1]);
+        int fd = args[1];
         struct file *fp = get_file_from_fd (fd);
         if (fp == NULL)
           { f->eax = (uint32_t) -1; break; }
@@ -303,9 +309,9 @@ syscall_handler (struct intr_frame *f)
     /* ── CLOSE ──────────────────────────────────────────────── */
     case SYS_CLOSE:
       {
-        check_user_address ((int *) f->esp + 1);
-        int fd = *((int *) f->esp + 1);
-        if (fd < 2)           /* stdin/stdout kapat = geçersiz */
+        check_user_address (&args[1]);
+        int fd = args[1];
+        if (fd < 2)           /* stdin/stdout kapatılmaya çalışılırsa geçersiz say */
           exit (-1);
         close_fd (fd);
         break;
