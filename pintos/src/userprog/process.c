@@ -86,7 +86,7 @@ struct thread *
 thread_from_tid (tid_t tid)
 {
   struct list_elem *e;
-  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+  for (e = list_begin (&all_threads); e != list_end (&all_threads); e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, allelem);
       if (t->tid == tid)
@@ -140,7 +140,7 @@ process_wait (tid_t child_tid)
   struct thread *child = NULL;
 
   /* Search for child in all threads */
-  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+  for (e = list_begin (&all_threads); e != list_end (&all_threads); e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, allelem);
       if (t->tid == child_tid && t->parent == cur)
