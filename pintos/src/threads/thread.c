@@ -71,15 +71,14 @@ void thread_schedule_tail (struct thread *prev);
 
 static tid_t allocate_tid (void);
 
+/* Priority karşılaştırma: büyük önce. */
 bool
 thread_priority_greater (const struct list_elem *a,
                          const struct list_elem *b,
                          void *aux UNUSED)
 {
-  struct thread *ta = list_entry (a, struct thread, elem);
-  struct thread *tb = list_entry (b, struct thread, elem);
-
-  return ta->priority > tb->priority;
+  return list_entry (a, struct thread, elem)->priority
+       > list_entry (b, struct thread, elem)->priority;
 }
 
 static bool
@@ -103,6 +102,7 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
   list_init (&sleep_list);
+    load_avg = FP_FROM_INT (0);
 
   initial_thread = running_thread ();
 
@@ -145,7 +145,18 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  thread_wake (timer_ticks ());
+ if (thread_mlfqs && t != idle_thread)
+    t->recent_cpu = FP_ADD_INT (t->recent_cpu, 1);
+
+  int64_t current_ticks = idle_ticks + kernel_ticks + user_ticks;
+
+  if (thread_mlfqs && current_ticks % TIMER_FREQ == 0)
+    {
+      mlfqs_update_load_avg_and_recent_cpu ();
+      mlfqs_update_all_priorities ();
+    }
+  else if (thread_mlfqs && current_ticks % TIME_SLICE == 0)
+    mlfqs_update_all_priorities ();
 
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
@@ -185,14 +196,7 @@ thread_create (const char *name,
 
   tid = t->tid = allocate_tid ();
 
-#ifdef USERPROG
-  struct thread *parent = thread_current ();
 
-  t->parent = parent;
-
-  list_push_back (&parent->children,
-                  &t->child_elem);
-#endif
 
   kf = alloc_frame (t, sizeof *kf);
 
@@ -211,8 +215,8 @@ thread_create (const char *name,
 
   thread_unblock (t);
 
-  if (priority > thread_current ()->priority)
-    thread_yield ();
+  if (thread_get_priority() < priority){
+    thread_yield ();}
 
   return tid;
 }
@@ -249,53 +253,42 @@ thread_unblock (struct thread *t)
   intr_set_level (old_level);
 }
 
+const char *
+thread_name (void) 
+{
+  return thread_current ()->name;
+}
+
+
 void
-thread_sleep (int64_t ticks)
+thread_sleep (int64_t wake_tick)
 {
   struct thread *cur = thread_current ();
   enum intr_level old_level;
 
-  if (cur == idle_thread)
-    return;
+  ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-
-  cur->wakeup_tick = ticks;
-
-  list_insert_ordered (&sleep_list,
-                       &cur->sleepelem,
-                       thread_wakeup_less,
-                       NULL);
-
+  cur->wake_tick = wake_tick;
+  list_insert_ordered (&sleep_list, &cur->elem,
+                       thread_wake_tick_less, NULL);
   thread_block ();
-
   intr_set_level (old_level);
 }
 
+/* Her timer tick'inde çağrılır; uyanması gereken thread'leri uyandırır. */
 void
-thread_wake (int64_t ticks)
+thread_wake (int64_t current_tick)
 {
-  struct list_elem *e;
-
-  e = list_begin (&sleep_list);
+  struct list_elem *e = list_begin (&sleep_list);
 
   while (e != list_end (&sleep_list))
     {
-      struct thread *t =
-        list_entry (e, struct thread, sleepelem);
-
-      if (t->wakeup_tick <= ticks)
-        {
-          e = list_next (e);
-
-          list_remove (&t->sleepelem);
-
-          thread_unblock (t);
-        }
-      else
-        {
-          break;
-        }
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->wake_tick > current_tick)
+        break;
+      e = list_remove (e);
+      thread_unblock (t);
     }
 }
 
@@ -392,24 +385,22 @@ thread_foreach (thread_action_func *func,
 void
 thread_set_priority (int new_priority)
 {
+  if (thread_mlfqs)   /* <-- bu satırı ekle */
+    return;
+
   struct thread *cur = thread_current ();
-
   cur->base_priority = new_priority;
-
-  if (list_empty (&cur->donations))
-    cur->priority = new_priority;
-
+  cur->priority = thread_get_effective_priority (cur);
   if (!list_empty (&ready_list))
     {
-      struct thread *front =
-        list_entry (list_begin (&ready_list),
-                    struct thread,
-                    elem);
-
+      struct thread *front = list_entry (list_begin (&ready_list),
+                                         struct thread, elem);
       if (front->priority > cur->priority)
         thread_yield ();
     }
 }
+
+
 
 int
 thread_get_priority (void)
@@ -417,27 +408,45 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
+/* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED)
+thread_set_nice (int nice)
 {
+  struct thread *cur = thread_current ();
+  enum intr_level old_level = intr_disable ();
+  cur->nice = nice;
+  mlfqs_calc_priority (cur, NULL);
+  /* Daha yüksek priority'li thread varsa yield et. */
+  if (!list_empty (&ready_list))
+    {
+      struct thread *front = list_entry (list_begin (&ready_list),
+                                         struct thread, elem);
+      if (front->priority > cur->priority)
+        {
+          intr_set_level (old_level);
+          thread_yield ();
+          return;
+        }
+    }
+  intr_set_level (old_level);
 }
 
 int
 thread_get_nice (void)
 {
-  return 0;
+   return thread_current ()->nice;
 }
 
 int
 thread_get_load_avg (void)
 {
-  return 0;
+  return FP_TO_INT_NEAR (FP_MUL_INT (load_avg, 100));
 }
 
 int
 thread_get_recent_cpu (void)
 {
-  return 0;
+  return FP_TO_INT_NEAR (FP_MUL_INT (thread_current ()->recent_cpu, 100));
 }
 
 struct thread *
