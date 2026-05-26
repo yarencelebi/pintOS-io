@@ -5,8 +5,6 @@
 #include <list.h>
 #include <stdint.h>
 
-/* synch.h buraya DAHIL EDİLMİYOR — döngüsel bağımlılığı kırmak için
-   struct lock forward-declare edilir. */
 struct lock;
 
 enum thread_status
@@ -26,7 +24,6 @@ typedef int tid_t;
 
 struct thread
 {
-  /* Owned by thread.c. */
   tid_t tid;
   enum thread_status status;
   char name[16];
@@ -42,7 +39,6 @@ struct thread
 
   struct list_elem allelem;
 
-  /* Shared between thread.c and synch.c. */
   struct list_elem elem;
 
 #ifdef USERPROG
