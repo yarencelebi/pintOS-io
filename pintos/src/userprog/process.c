@@ -80,7 +80,7 @@ process_execute (const char *file_name)
   return tid;
 }
 
-/* Find thread by tid */
+/* Find thread by tid - uses all_list */
 struct thread *
 thread_from_tid (tid_t tid)
 {
@@ -138,7 +138,7 @@ process_wait (tid_t child_tid)
   struct list_elem *e;
   struct thread *child = NULL;
 
-  /* Search for child in active threads */
+  /* Search for child in all threads */
   for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, allelem);
