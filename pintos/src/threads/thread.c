@@ -27,7 +27,7 @@
 struct list ready_list;
 
 /* List of all processes. */
-static struct list all_threads;
+struct list all_threads;
 
 /* List of sleeping processes. */
 static struct list sleep_list;
