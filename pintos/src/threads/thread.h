@@ -1,5 +1,3 @@
-/* ========================= threads/thread.h ========================= */
-
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
@@ -7,17 +5,19 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/synch.h"
+#include "threads/fixed-point.h"
 
-/* States in a thread's life cycle. */
+/* Thread states. */
 enum thread_status
   {
     THREAD_RUNNING,     /* Running thread. */
-    THREAD_READY,       /* Not running but ready to run. */
-    THREAD_BLOCKED,     /* Waiting for an event to trigger. */
+    THREAD_READY,       /* Ready to run. */
+    THREAD_BLOCKED,     /* Blocked. */
     THREAD_DYING        /* About to be destroyed. */
   };
 
-/* Thread identifier type. */
+/* Thread identifier type.
+   An integer type that can be accommodating any given thread ID. */
 typedef int tid_t;
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
@@ -26,54 +26,53 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
-struct lock;
-struct file;
+/* Thread foreach fonksiyon prototipi (Derleyicinin aradığı eksik tip) */
+typedef void thread_action_func (struct thread *t, void *aux);
 
-#ifdef USERPROG
-/* Kullanıcı programlarının açtığı dosyaları takip etmek için yardımcı yapı */
-struct file_descriptor
-  {
-    int fd;                         /* File descriptor id */
-    struct file *file;              /* Açık olan dosyanın pointer'ı */
-    struct list_elem elem;          /* thread->open_files listesi için eleman */
-  };
+/* A network kernel thread or user process.
 
-/* Parent-Child ilişkisini çocuk ölse bile korumak için gerekli yapı */
-struct child_status
-  {
-    tid_t tid;                      /* Çocuğun thread ID'si */
-    int exit_status;                /* Çocuğun çıkış kodu (exit code) */
-    bool has_exited;                /* Çocuk süreç sonlandı mı? */
-    bool was_waited;                /* Parent bu çocuk için wait çağırdı mı? */
-    struct semaphore wait_sema;     /* Parent'ı wait syscall'unda bloklamak için */
-    struct list_elem elem;          /* thread->children listesi için eleman */
-  };
-#endif
-
+   Each thread structure is stored in its own 4 kB page.  The
+   thread structure itself sits at the very bottom of the page
+   (at offset 0).  The rest of the page is reserved for the
+   thread's kernel stack, which grows downward from the top of
+   the page (at offset 4 kB).  Hence, the minimum stack size is
+   almost 4 kB; a huge stack allocation will overflow the
+   page and corrupt the thread structure. */
 struct thread
   {
-    /* Pintos'un kendi orijinal değişkenleri */
+    /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
+    int priority;                       /* Current effective priority. */
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    /* ── PROJECT 1: THREADS (Alarm Clock & Priority Donation) ── */
+    int64_t wake_tick;                  /* Alarm clock için uyanma zamanı */
+    int base_priority;                  /* Orijinal öncelik değeri */
+    struct lock *waiting_lock;          /* Thread'in şu an beklediği lock */
+    struct list donations;              /* Bu thread'e yapılan öncelik bağışları */
+    struct list_elem donation_elem;     /* Bağış listesi elemanı */
+
+    /* ── PROJECT 1: ADVANCED SCHEDULER (MLFQS) ── */
+    int nice;                           /* Nice değeri */
+    int recent_cpu;                     /* Recent CPU değeri (fixed-point) */
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    
-    /* ── PROJECT 2 USERPROG İÇİN EKLENEN DEĞİŞKENLER ── */
+
+    /* ── PROJECT 2: USERPROG (Senin Sistem Çağrıların) ── */
     int exit_status;                    /* Sürecin çıkış kodu */
-    struct semaphore exit_sema;         /* Parent'ın beklemesi için semaphore */
+    struct semaphore exit_sema;         /* Parent senkronizasyonu için semaphore */
     struct list open_files;             /* Açık dosyaların listesi */
-    int next_fd;                        /* Verilecek bir sonraki dosya deskriptörü (FD) */
-    struct file *executable;            /* Çalıştırılan binary dosya (yazma koruması için) */
-    struct child_status *status_in_parent; /* Parent'ın listesindeki durum referansı */
+    int next_fd;                        /* Verilecek sonraki FD numarası */
+    struct file *executable;            /* Çalıştırılan binary (yazma koruması) */
+    struct child_status *status_in_parent; /* Parent'ın listesindeki durumu */
     struct list child_list;             /* Çocuk süreçlerin listesi */
 #endif
 
@@ -81,12 +80,18 @@ struct thread
     unsigned magic;                     /* Detects stack overflow. */
   };
 
-/* Global değişkenler */
-extern bool thread_mlfqs;
-extern struct list ready_list;
-extern uint32_t thread_stack_ofs;
+/* Bir dosya tanımlayıcısını takip etmek için gereken yardımcı struct */
+struct file_descriptor
+  {
+    int fd;
+    struct file *file;
+    struct list_elem elem;
+  };
 
-/* --- Fonksiyon Protokolleri --- */
+/* If false (default), use round-robin scheduler.
+   If true, use multi-level feedback queue scheduler.
+   Controlled by kernel command-line option "-o mlfqs". */
+extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
@@ -107,18 +112,9 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
-/* Alarmlar ve Öncelik Yönetimi */
-void thread_sleep (int64_t wake_tick);
-void thread_wake (int64_t current_tick);
-bool thread_priority_greater (const struct list_elem *a, const struct list_elem *b, void *aux);
+/* Per-thread career steps. */
+void thread_foreach (thread_action_func *, void *);
 
-/* Priority Donation fonksiyon tanımlamaları */
-int thread_get_effective_priority (struct thread *t);
-void thread_donate_priority (void);
-void thread_remove_donation (struct lock *lock);
-void thread_update_priority (void);
-
-/* Getter / Setter arabirimleri */
 int thread_get_priority (void);
 void thread_set_priority (int);
 
@@ -126,5 +122,15 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* Project 1 için thread.c içindeki yardımcı fonksiyonların prototipleri */
+void thread_sleep (int64_t wake_tick);
+void thread_wake (int64_t current_tick);
+bool thread_wake_tick_less (const struct list_elem *a, const struct list_elem *b, void *aux);
+void thread_donate_priority (void);
+void thread_remove_donation (struct lock *lock);
+void mlfqs_calc_priority (struct thread *t);
+void mlfqs_calc_recent_cpu (struct thread *t);
+void mlfqs_update_load_avg_and_recent_cpu (void);
 
 #endif /* threads/thread.h */
