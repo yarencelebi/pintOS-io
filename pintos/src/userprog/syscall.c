@@ -46,12 +46,13 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
 
     case SYS_EXIT:
-      /* Yığıttan bir sonraki argümanı (çıkış kodunu) oku (esp + 4 byte) */
-      check_valid_ptr (f->esp + 4);
-      int status = *(int *)(f->esp + 4);
-      
-      thread_exit ();
-      break;
+  check_valid_ptr (f->esp + 4);
+  {
+    int status = *(int *)(f->esp + 4);
+    thread_current ()->exit_status = status;   /* <-- BU SATIR EKSİKTİ */
+    thread_exit ();
+  }
+  break;
 
     case SYS_WRITE:
       /* write(fd, buffer, size) için yığıttan argümanları sırayla oku */

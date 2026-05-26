@@ -656,7 +656,7 @@ t->nice       = 0;
 list_init (&t->donations);
   t->magic = THREAD_MAGIC;
   t->exit_status = -1; /* Program normal bitmezse varsayılan olarak -1 dönsün */
-
+sema_init (&t->exit_sema, 0); 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
