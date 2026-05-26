@@ -82,8 +82,9 @@ static void mlfqs_update_all_priorities (void);
 static void mlfqs_calc_priority (struct thread *t, void *aux UNUSED);
 static void mlfqs_calc_recent_cpu (struct thread *t, void *aux UNUSED);
 
-/* Priority comparison: larger priority comes first in list */
-static bool
+/* Priority comparison: larger priority comes first in list 
+   EXPORTED for synch.c */
+bool
 thread_priority_greater (const struct list_elem *a,
                          const struct list_elem *b,
                          void *aux UNUSED)
