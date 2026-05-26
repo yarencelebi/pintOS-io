@@ -32,9 +32,6 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
-/* thread.h'den extern — döngüsel include olmadan erişim */
-extern struct list ready_list;
-
 static void donate_priority (struct thread *t);
 static void remove_donations_for_lock (struct thread *t, struct lock *lock);
 static void update_priority_after_release (struct thread *t);
