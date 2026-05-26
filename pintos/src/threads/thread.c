@@ -295,7 +295,7 @@ thread_yield (void)
     list_insert_ordered (&ready_list, &cur->elem, thread_priority_greater, NULL);
   cur->status = THREAD_READY;
   schedule ();
-  entr_set_level (old_level);
+  intr_set_level (old_level);
 }
 
 void
