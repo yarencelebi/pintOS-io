@@ -87,8 +87,8 @@ thread_wakeup_less (const struct list_elem *a,
                     const struct list_elem *b,
                     void *aux UNUSED)
 {
-  struct thread *ta = list_entry (a, struct thread, elem);
-  struct thread *tb = list_entry (b, struct thread, elem);
+  struct thread *ta = list_entry (a, struct thread, sleepelem);
+  struct thread *tb = list_entry (b, struct thread, sleepelem);
 
   return ta->wakeup_tick < tb->wakeup_tick;
 }
@@ -263,7 +263,7 @@ thread_sleep (int64_t ticks)
   cur->wakeup_tick = ticks;
 
   list_insert_ordered (&sleep_list,
-                       &cur->elem,
+                       &cur->sleepelem,
                        thread_wakeup_less,
                        NULL);
 
@@ -282,17 +282,19 @@ thread_wake (int64_t ticks)
   while (e != list_end (&sleep_list))
     {
       struct thread *t =
-        list_entry (e, struct thread, elem);
+        list_entry (e, struct thread, sleepelem);
 
       if (t->wakeup_tick <= ticks)
         {
-          e = list_remove (e);
+          e = list_next (e);
+
+          list_remove (&t->sleepelem);
 
           thread_unblock (t);
         }
       else
         {
-          e = list_next (e);
+          break;
         }
     }
 }
