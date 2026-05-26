@@ -245,7 +245,8 @@ thread_foreach (thread_action_func *func, void *aux)
 
   ASSERT (intr_get_level () == INTR_OFF);
 
-  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+  for (e = list_begin (&all_list); e != list_end (&all_list);
+       e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, allelem);
       func (t, aux);
@@ -283,4 +284,162 @@ int thread_get_load_avg (void) { return 0; }
 int thread_get_recent_cpu (void) { return 0; }
 
 struct thread *
-get_thread_by_tid (t
+get_thread_by_tid (tid_t tid)
+{
+  struct list_elem *e;
+
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  for (e = list_begin (&all_list); e != list_end (&all_list);
+       e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, allelem);
+      if (t->tid == tid)
+        return t;
+    }
+  return NULL;
+}
+
+static void
+kernel_thread (thread_func *function, void *aux)
+{
+  ASSERT (function != NULL);
+
+  intr_enable ();
+  function (aux);
+  thread_exit ();
+}
+
+static struct thread *
+running_thread (void)
+{
+  uint32_t *esp;
+
+  asm ("mov %%esp, %0" : "=g" (esp));
+  return pg_round_down (esp);
+}
+
+static bool
+is_thread (struct thread *t)
+{
+  return t != NULL && t->magic == THREAD_MAGIC;
+}
+
+static void
+init_thread (struct thread *t, const char *name, int priority)
+{
+  enum intr_level old_level;
+
+  ASSERT (t != NULL);
+  ASSERT (PRI_MIN <= priority && priority <= PRI_MAX);
+  ASSERT (name != NULL);
+
+  memset (t, 0, sizeof *t);
+  t->status = THREAD_BLOCKED;
+  strlcpy (t->name, name, sizeof t->name);
+  t->stack = (uint8_t *) t + PGSIZE;
+  t->priority = priority;
+  t->base_priority = priority;
+  t->waiting_lock = NULL;
+  list_init (&t->donations);
+  t->magic = THREAD_MAGIC;
+
+#ifdef USERPROG
+  list_init (&t->open_files);
+  t->next_fd = 2;
+  t->exit_status = -1;
+  t->load_success = false;
+  t->waited = false;
+  sema_init (&t->wait_sema, 0);
+  sema_init (&t->die_sema, 0);
+  sema_init (&t->load_sema, 0);
+#endif
+
+  old_level = intr_disable ();
+  list_push_back (&all_list, &t->allelem);
+  intr_set_level (old_level);
+}
+
+static void
+idle (void *idle_started_ UNUSED)
+{
+  struct semaphore *idle_started = idle_started_;
+  idle_thread = thread_current ();
+  sema_up (idle_started);
+
+  for (;;)
+    {
+      intr_disable ();
+      thread_block ();
+      asm volatile ("sti; hlt" : : : "memory");
+    }
+}
+
+static void *
+alloc_frame (struct thread *t, size_t size)
+{
+  ASSERT (is_thread (t));
+  ASSERT (size % sizeof (uint32_t) == 0);
+
+  t->stack -= size;
+  return t->stack;
+}
+
+static struct thread *
+next_thread_to_run (void)
+{
+  if (list_empty (&ready_list))
+    return idle_thread;
+  else
+    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+}
+
+void
+thread_schedule_tail (struct thread *prev)
+{
+  struct thread *cur = running_thread ();
+
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  cur->status = THREAD_RUNNING;
+  thread_ticks = 0;
+
+#ifdef USERPROG
+  process_activate ();
+#endif
+
+  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread)
+    {
+      ASSERT (prev != cur);
+      palloc_free_page (prev);
+    }
+}
+
+static void
+schedule (void)
+{
+  struct thread *cur = running_thread ();
+  struct thread *next = next_thread_to_run ();
+  struct thread *prev = NULL;
+
+  ASSERT (intr_get_level () == INTR_OFF);
+  ASSERT (cur->status != THREAD_RUNNING);
+  ASSERT (is_thread (next));
+
+  if (cur != next)
+    prev = switch_threads (cur, next);
+  thread_schedule_tail (prev);
+}
+
+static tid_t
+allocate_tid (void)
+{
+  static tid_t next_tid = 1;
+  tid_t tid;
+
+  lock_acquire (&tid_lock);
+  tid = next_tid++;
+  lock_release (&tid_lock);
+
+  return tid;
+}
