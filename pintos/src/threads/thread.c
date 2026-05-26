@@ -76,14 +76,14 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
-/* MLFQS Yardımcı Fonksiyonları */
+/* MLFQS Helper Functions - ALL STATIC */
 static void mlfqs_update_load_avg_and_recent_cpu (void);
 static void mlfqs_update_all_priorities (void);
 static void mlfqs_calc_priority (struct thread *t, void *aux UNUSED);
 static void mlfqs_calc_recent_cpu (struct thread *t, void *aux UNUSED);
 
-/* Priority karşılaştırma: büyük olan liste başında yer alır. */
-bool
+/* Priority comparison: larger priority comes first in list */
+static bool
 thread_priority_greater (const struct list_elem *a,
                          const struct list_elem *b,
                          void *aux UNUSED)
@@ -92,7 +92,7 @@ thread_priority_greater (const struct list_elem *a,
        > list_entry (b, struct thread, elem)->priority;
 }
 
-/* Uyku listesi karşılaştırma fonksiyonu */
+/* Sleep list comparison function */
 static bool
 thread_wake_tick_less (const struct list_elem *a,
                        const struct list_elem *b,
@@ -148,7 +148,7 @@ thread_tick (void)
   else
     kernel_ticks++;
 
-  /* MLFQS recent_cpu güncellemesi */
+  /* MLFQS recent_cpu update */
   if (thread_mlfqs && t != idle_thread)
     t->recent_cpu = FP_ADD_INT (t->recent_cpu, 1);
 
@@ -203,7 +203,6 @@ thread_create (const char *name, int priority,
   kf->aux = aux;
 
   ef = alloc_frame (t, sizeof *ef);
-  ef = alloc_frame (t, sizeof *ef);
   ef->eip = (void (*) (void)) kernel_thread;
 
   sf = alloc_frame (t, sizeof *sf);
@@ -212,7 +211,7 @@ thread_create (const char *name, int priority,
 
   thread_unblock (t);
 
-  /* Preemption: Yeni oluşturulan thread mevcut olandan yüksekse CPU'yu devret */
+  /* Preemption: if new thread has higher priority, yield CPU */
   if (thread_get_priority () < t->priority)
     {
       thread_yield ();
@@ -311,7 +310,7 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-/* Thread'i belirli bir tick'e kadar uyku listesine alır */
+/* Put thread to sleep until wake_tick */
 void
 thread_sleep (int64_t wake_tick)
 {
@@ -327,7 +326,7 @@ thread_sleep (int64_t wake_tick)
   intr_set_level (old_level);
 }
 
-/* Uyanma zamanı gelmiş thread'leri ready_list'e taşır */
+/* Wake up sleeping threads whose time has come */
 void
 thread_wake (int64_t current_tick)
 {
@@ -343,9 +342,9 @@ thread_wake (int64_t current_tick)
     }
 }
 
-/* ── PRIORITY DONATION (ÖNCELİK BAĞIŞI) SİSTEMİ ────────────────── */
+/* ── PRIORITY DONATION SYSTEM ────────────────────────────── */
 
-/* Thread'in efektif priority'sini donations listesine bakarak hesaplar */
+/* Get thread's effective priority considering donations */
 int
 thread_get_effective_priority (struct thread *t)
 {
@@ -361,7 +360,7 @@ thread_get_effective_priority (struct thread *t)
   return max_priority;
 }
 
-/* İhtiyaç halinde zincirleme öncelik bağışı yapar (Maksimum 8 derinlik önerilir) */
+/* Perform cascading priority donation (max 8 levels deep) */
 void
 thread_donate_priority (void)
 {
@@ -381,7 +380,7 @@ thread_donate_priority (void)
     }
 }
 
-/* Bırakılan lock'a ait donation'ları temizler */
+/* Remove donations associated with a lock */
 void
 thread_remove_donation (struct lock *lock)
 {
@@ -398,7 +397,7 @@ thread_remove_donation (struct lock *lock)
     }
 }
 
-/* Öncelik listesini günceller ve preemption tetikler */
+/* Update thread priority and handle preemption */
 void
 thread_update_priority (void)
 {
@@ -430,7 +429,7 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
-/* ── ADVANCED SCHEDULER (MLFQS) İMPLEMENTASYONU ───────────────── */
+/* ── ADVANCED SCHEDULER (MLFQS) IMPLEMENTATION ───────────────── */
 
 void
 thread_set_nice (int new_nice)
@@ -560,13 +559,24 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->base_priority = priority;
   t->waiting_lock = NULL;
-  t->nice       = 0;
+  t->nice = 0;
   t->recent_cpu = FP_FROM_INT (0);
   list_init (&t->donations);
   t->magic = THREAD_MAGIC;
   
+#ifdef USERPROG
   t->exit_status = -1;
-  sema_init (&t->exit_sema, 0); 
+  sema_init (&t->load_sema, 0);
+  t->load_success = false;
+  t->parent = NULL;
+  list_init (&t->open_files);
+  t->next_fd = 2;
+  t->executable_file = NULL;
+  list_init (&t->child_list);
+  t->waited = false;
+  sema_init (&t->wait_sema, 0);
+  sema_init (&t->die_sema, 0);
+#endif
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
