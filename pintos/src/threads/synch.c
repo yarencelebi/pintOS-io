@@ -1,31 +1,3 @@
-/* This file is derived from source code for the Nachos
-   instructional operating system.  The Nachos copyright notice
-   is reproduced in full below. */
-
-/* Copyright (c) 1992-1996 The Regents of the University of California.
-   All rights reserved.
-
-   Permission to use, copy, modify, and distribute this software
-   and its documentation for any purpose, without fee, and
-   without written agreement is hereby granted, provided that the
-   above copyright notice and the following two paragraphs appear
-   in all copies of this software.
-
-   IN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO
-   ANY PARTY FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR
-   CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OF THIS SOFTWARE
-   AND ITS DOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA
-   HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-   THE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY
-   WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-   PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS"
-   BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATION TO
-   PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
-   MODIFICATIONS.
-*/
-
 /* This file is derived from source code for the Nachos instructional
    operating system.  The Nachos copyright notice and license terms
    appear below.
@@ -56,6 +28,12 @@
 #include <string.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+
+/* Forward declarations */
+static bool semaphore_elem_compare (const struct list_elem *a,
+                                    const struct list_elem *b,
+                                    void *aux);
+static void donate_priority (void);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer plus a list of threads.  Initializing a
@@ -125,6 +103,7 @@ sema_up (struct semaphore *sema)
   intr_set_level (old_level);
 }
 
+/* Helper function for priority donation */
 static void
 donate_priority (void)
 {
@@ -137,6 +116,7 @@ donate_priority (void)
       holder->priority = thread_get_effective_priority (holder);
       if (holder->status == THREAD_READY)
         {
+          list_remove (&holder->elem);
           list_insert_ordered (&ready_list, &holder->elem,
                                thread_priority_greater, NULL);
         }
@@ -304,7 +284,7 @@ cond_broadcast (struct condition *cond, struct lock *lock)
     cond_signal (cond, lock);
 }
 
-/* Semaphore element comparison function. */
+/* Semaphore element comparison function - STATIC */
 static bool
 semaphore_elem_compare (const struct list_elem *a,
                         const struct list_elem *b,
@@ -313,15 +293,38 @@ semaphore_elem_compare (const struct list_elem *a,
   struct semaphore_elem *se_a = list_entry (a, struct semaphore_elem, elem);
   struct semaphore_elem *se_b = list_entry (b, struct semaphore_elem, elem);
   
-  struct thread *t_a = list_entry (list_begin (&se_a->semaphore.waiters),
-                                   struct thread, elem);
-  struct thread *t_b = list_entry (list_begin (&se_b->semaphore.waiters),
-                                   struct thread, elem);
+  struct thread *t_a = NULL;
+  struct thread *t_b = NULL;
   
-  if (list_empty (&se_a->semaphore.waiters))
+  if (!list_empty (&se_a->semaphore.waiters))
+    t_a = list_entry (list_begin (&se_a->semaphore.waiters), struct thread, elem);
+  
+  if (!list_empty (&se_b->semaphore.waiters))
+    t_b = list_entry (list_begin (&se_b->semaphore.waiters), struct thread, elem);
+  
+  if (t_a == NULL)
     return false;
-  if (list_empty (&se_b->semaphore.waiters))
+  if (t_b == NULL)
     return true;
   
   return t_a->priority > t_b->priority;
+}
+
+/* Try to down a semaphore. Returns true if successful or false if the
+   semaphore's value is already zero. */
+bool
+sema_try_down (struct semaphore *sema)
+{
+  enum intr_level old_level;
+  bool success;
+
+  ASSERT (sema != NULL);
+
+  old_level = intr_disable ();
+  success = sema->value > 0;
+  if (success)
+    sema->value--;
+  intr_set_level (old_level);
+
+  return success;
 }
