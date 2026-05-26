@@ -107,6 +107,12 @@ struct thread
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
 
+/* Exported for synch.c - ready list and comparison function */
+extern struct list ready_list;
+bool thread_priority_greater (const struct list_elem *a,
+                              const struct list_elem *b,
+                              void *aux);
+
 void thread_init (void);
 void thread_start (void);
 
