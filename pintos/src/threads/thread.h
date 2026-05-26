@@ -43,13 +43,20 @@ struct thread
     uint32_t *pagedir;
 
     /* Süreç yönetimi */
+    struct thread *parent;       
     struct list children;
     struct list_elem child_elem;
+
+    /* wait_sema: child exit olunca parent'ı uyandırır (0→1) */
     struct semaphore wait_sema;
+    /* die_sema: parent wait bitince child'ın struct'ını serbest bırakır (0→1) */
     struct semaphore die_sema;
+    /* load_sema: child load bitince parent'ı uyandırır (0→1) */
     struct semaphore load_sema;
+
     int exit_status;
     bool load_success;
+    bool waited;                  
 #endif
 
     /* Owned by thread.c. */
@@ -77,7 +84,7 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
-
+/* process.c tarafından kullanılan fonksiyon bildirimi */
 struct thread *get_thread_by_tid (tid_t tid);
 
 typedef void thread_action_func (struct thread *t, void *aux);
