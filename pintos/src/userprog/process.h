@@ -8,4 +8,7 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
 
+/* Helper function to find thread by tid */
+struct thread *thread_from_tid (tid_t tid);
+
 #endif /* userprog/process.h */
