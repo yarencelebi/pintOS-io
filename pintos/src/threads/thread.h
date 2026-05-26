@@ -6,6 +6,9 @@
 #include <stdint.h>
 #include "threads/synch.h"
 #include "threads/fixed-point.h"
+/* Liste tanımlamaları - Diğer dosyalardan erişebilmek için */
+extern struct list all_threads;
+extern struct list ready_list;
 
 /* Thread states. */
 enum thread_status
