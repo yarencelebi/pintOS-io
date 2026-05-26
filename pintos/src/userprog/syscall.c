@@ -17,20 +17,18 @@ struct lock filesys_lock;
 
 static void syscall_handler (struct intr_frame *f);
 
-/* ── Adres Doğrulama (Geliştirilmiş Güvenlik Altyapısı) ──────────────── */
+/* ── Address Validation (Security) ──────────────────────────────── */
 
 void
 check_user_address (const void *addr)
 {
   struct thread *cur = thread_current ();
-  /* Adres NULL olmamalı, kullanıcı alanında olmalı ve map edilmiş bir sayfaya ait olmalı */
   if (addr == NULL || !is_user_vaddr (addr) || pagedir_get_page (cur->pagedir, addr) == NULL)
     {
       exit (-1);
     }
 }
 
-/* Sayfa sınırlarını güvenle kontrol eder */
 void
 check_user_buffer (const void *addr, unsigned size)
 {
@@ -41,7 +39,7 @@ check_user_buffer (const void *addr, unsigned size)
   check_user_address (p);
   check_user_address (p + size - 1);
 
-  /* Aradaki tüm sayfa geçiş sınırlarını doğrula */
+  /* Check all page boundaries */
   const char *page = (const char *) pg_round_down (p) + PGSIZE;
   for (; page < p + size; page += PGSIZE)
     {
@@ -49,7 +47,6 @@ check_user_buffer (const void *addr, unsigned size)
     }
 }
 
-/* Kullanıcıdan gelen string argümanların (dosya isimleri vb.) sonundaki null karakterine kadar doğrular */
 void
 check_user_string (const char *str)
 {
@@ -63,7 +60,7 @@ check_user_string (const char *str)
     }
 }
 
-/* ── FD Yönetimi (Thread Güvenli) ────────────────────────────── */
+/* ── File Descriptor Management ────────────────────────────────── */
 
 struct file *
 get_file_from_fd (int fd)
@@ -89,7 +86,7 @@ add_file_to_thread (struct file *f)
   if (fe == NULL)
     return -1;
   fe->file = f;
-  fe->fd   = t->next_fd++;
+  fe->fd = t->next_fd++;
   list_push_back (&t->open_files, &fe->elem);
   return fe->fd;
 }
@@ -115,7 +112,7 @@ close_fd (int fd)
   return -1;
 }
 
-/* ── Syscall Başlatıcı ────────────────────────────────────────── */
+/* ── Syscall Initialization ────────────────────────────────────── */
 
 void
 syscall_init (void)
@@ -124,12 +121,11 @@ syscall_init (void)
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
-/* ── Sistem Çağrısı Seçici Altyapısı (Handler) ────────────────── */
+/* ── Syscall Handler ───────────────────────────────────────────── */
 
 static void
 syscall_handler (struct intr_frame *f)
 {
-  /* Stack pointer'ın kendisinin güvenli adreste olduğunu doğrula */
   check_user_address (f->esp);
 
   int syscall_nr = *(int *) f->esp;
@@ -153,7 +149,6 @@ syscall_handler (struct intr_frame *f)
         check_user_address (f->esp + 4);
         const char *cmd = *(const char **) (f->esp + 4);
         check_user_string (cmd);
-        
         f->eax = (uint32_t) process_execute (cmd);
         break;
       }
@@ -238,13 +233,11 @@ syscall_handler (struct intr_frame *f)
         unsigned size = *(unsigned *) (f->esp + 12);
         check_user_buffer (buf, size);
 
-        if (fd == 0) /* STDIN */
+        if (fd == 0)  /* STDIN */
           {
             unsigned i;
             for (i = 0; i < size; i++)
-              {
-                buf[i] = input_getc ();
-              }
+              buf[i] = input_getc ();
             f->eax = size;
           }
         else
@@ -273,7 +266,7 @@ syscall_handler (struct intr_frame *f)
         unsigned size = *(unsigned *) (f->esp + 12);
         check_user_buffer (buf, size);
 
-        if (fd == 1) /* STDOUT */
+        if (fd == 1)  /* STDOUT */
           {
             putbuf (buf, size);
             f->eax = size;
@@ -334,7 +327,7 @@ syscall_handler (struct intr_frame *f)
         check_user_address (f->esp + 4);
         int fd = *(int *) (f->esp + 4);
 
-        if (fd < 2) 
+        if (fd < 2)
           {
             exit (-1);
           }
@@ -347,38 +340,15 @@ syscall_handler (struct intr_frame *f)
     }
 }
 
-/* ── Çıkış Yardımcısı (GÜNCELLENDİ) ────────────────────────── */
+/* ── Exit Helper ────────────────────────────────────────────────– */
 
 void
 exit (int status)
 {
   struct thread *cur = thread_current ();
+  cur->exit_status = status;
   
-  /* 1. Adım: Parent'ın bizim çıkış kodumuzu görebilmesi için yapıyı güncelle */
-  if (cur->status_in_parent != NULL)
-    {
-      cur->status_in_parent->exit_status = status;
-    }
-
-  /* 2. Adım: PINTOS TESTLERİNİN BEKLEDİĞİ KRİTİK ÇIKTI FORMULA */
   printf ("%s: exit(%d)\n", cur->name, status);
-
-  /* 3. Adım: Bu thread ölürken açık bıraktığı tüm dosyaları temizle */
-  struct list_elem *e = list_begin (&cur->open_files);
-  while (e != list_end (&cur->open_files))
-    {
-      struct file_descriptor *fe = list_entry (e, struct file_descriptor, elem);
-      e = list_next (e);
-      file_close (fe->file);
-      free (fe);
-    }
-
-  /* 4. Adım: Çalışan binary yazma korumasını serbest bırak (rox testleri için) */
-  if (cur->executable != NULL)
-    {
-      file_allow_write (cur->executable);
-      file_close (cur->executable);
-    }
 
   thread_exit ();
 }
