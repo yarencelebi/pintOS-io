@@ -44,6 +44,7 @@ struct thread
 
   struct list_elem allelem;
   struct list_elem elem;
+struct list_elem sleepelem;
 
 #ifdef USERPROG
   struct list open_files;
