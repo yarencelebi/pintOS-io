@@ -5,20 +5,18 @@
 #include <debug.h>
 #include "filesys/file.h"
 
-
-
 extern struct lock filesys_lock;
 
 void syscall_init (void);
 void exit (int status) NO_RETURN;
 
-/* Adres doğrulama yardımcıları — process.c de kullanır */
+/* Address validation helpers */
 void check_user_address (const void *addr);
-void check_user_buffer  (const void *addr, unsigned size);
-void check_user_string  (const char *str);
+void check_user_buffer (const void *addr, unsigned size);
+void check_user_string (const char *str);
 
-/* FD yardımcıları */
+/* File descriptor helpers */
 struct file *get_file_from_fd (int fd);
-int          add_file_to_thread (struct file *f);
+int add_file_to_thread (struct file *f);
 
 #endif /* userprog/syscall.h */
