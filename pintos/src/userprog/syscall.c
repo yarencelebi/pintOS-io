@@ -132,7 +132,6 @@ syscall_handler (struct intr_frame *f)
   /* Stack pointer'ın kendisinin güvenli adreste olduğunu doğrula */
   check_user_address (f->esp);
 
-  /* Arkadaşının %100 uyumlu byte-offset okuma algoritması */
   int syscall_nr = *(int *) f->esp;
 
   switch (syscall_nr)
@@ -239,7 +238,7 @@ syscall_handler (struct intr_frame *f)
         unsigned size = *(unsigned *) (f->esp + 12);
         check_user_buffer (buf, size);
 
-        if (fd == 0) /* STDIN - Klavyeden girdi alımı */
+        if (fd == 0) /* STDIN */
           {
             unsigned i;
             for (i = 0; i < size; i++)
@@ -274,7 +273,7 @@ syscall_handler (struct intr_frame *f)
         unsigned size = *(unsigned *) (f->esp + 12);
         check_user_buffer (buf, size);
 
-        if (fd == 1) /* STDOUT - Konsola yazdırma */
+        if (fd == 1) /* STDOUT */
           {
             putbuf (buf, size);
             f->eax = size;
@@ -335,7 +334,7 @@ syscall_handler (struct intr_frame *f)
         check_user_address (f->esp + 4);
         int fd = *(int *) (f->esp + 4);
 
-        if (fd < 2) /* Standart kanallar (0 ve 1) kapatılamaz */
+        if (fd < 2) 
           {
             exit (-1);
           }
@@ -348,12 +347,38 @@ syscall_handler (struct intr_frame *f)
     }
 }
 
-/* ── Çıkış Yardımcısı ────────────────────────────────────────── */
+/* ── Çıkış Yardımcısı (GÜNCELLENDİ) ────────────────────────── */
 
 void
 exit (int status)
 {
-  struct thread *t = thread_current ();
-  t->exit_status = status;
+  struct thread *cur = thread_current ();
+  
+  /* 1. Adım: Parent'ın bizim çıkış kodumuzu görebilmesi için yapıyı güncelle */
+  if (cur->status_in_parent != NULL)
+    {
+      cur->status_in_parent->exit_status = status;
+    }
+
+  /* 2. Adım: PINTOS TESTLERİNİN BEKLEDİĞİ KRİTİK ÇIKTI FORMULA */
+  printf ("%s: exit(%d)\n", cur->name, status);
+
+  /* 3. Adım: Bu thread ölürken açık bıraktığı tüm dosyaları temizle */
+  struct list_elem *e = list_begin (&cur->open_files);
+  while (e != list_end (&cur->open_files))
+    {
+      struct file_descriptor *fe = list_entry (e, struct file_descriptor, elem);
+      e = list_next (e);
+      file_close (fe->file);
+      free (fe);
+    }
+
+  /* 4. Adım: Çalışan binary yazma korumasını serbest bırak (rox testleri için) */
+  if (cur->executable != NULL)
+    {
+      file_allow_write (cur->executable);
+      file_close (cur->executable);
+    }
+
   thread_exit ();
 }
