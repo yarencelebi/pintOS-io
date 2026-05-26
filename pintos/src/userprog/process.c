@@ -88,6 +88,11 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  /* HOCANIN ÖNERİSİ: Gerçek senkronizasyonu yazana kadar 
+     çekirdeğin hemen kapanmasını engellemek için sonsuz döngü koyuyoruz. */
+  while (1) {
+    thread_yield(); /* Bilgisayarın tamamen kilitlenmemesi için işlemciyi devreder */
+  }
   return -1;
 }
 
@@ -96,6 +101,7 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
+  printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
   uint32_t *pd;
 
   /* Destroy the current process's page directory and switch back
@@ -437,7 +443,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        *esp = PHYS_BASE-12;
       else
         palloc_free_page (kpage);
     }

@@ -92,6 +92,7 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    int exit_status; /* Sürecin bitiş kodunu tutmak için */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
