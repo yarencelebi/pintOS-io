@@ -6,6 +6,7 @@
 /* Gerekli ek kütüphanelerimizi dahil ediyoruz */
 #include "threads/vaddr.h"
 #include "userprog/process.h"
+#include "devices/shutdown.h"
 
 static void syscall_handler (struct intr_frame *);
 static void check_valid_ptr (const void *vaddr);
