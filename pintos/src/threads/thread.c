@@ -660,6 +660,14 @@ sema_init (&t->exit_sema, 0);
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+	/* Dosya tablosunu sıfırla ve FD numarasını 2'den başlat */
+  int i;
+  for (i = 0; i < 128; i++)
+    {
+      t->fd_table[i] = NULL;
+    }
+  t->next_fd = 2;
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

@@ -95,6 +95,9 @@ struct thread
     struct list_elem elem;              /* List element. */
     struct semaphore exit_sema;
     int exit_status; /* Sürecin bitiş kodunu tutmak için */
+    struct file *fd_table[128]; /* Dosya tanımlayıcı tablosu (File Descriptor Table) */
+    int next_fd;                /* Bu thread'in bir sonraki boş FD numarası */
+
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */

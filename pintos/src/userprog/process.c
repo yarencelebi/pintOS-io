@@ -93,7 +93,7 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
+  //printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
   uint32_t *pd;
  
   pd = cur->pagedir;
