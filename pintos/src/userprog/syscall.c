@@ -30,11 +30,23 @@ lock_init (&filesys_lock);
 static void
 check_valid_ptr (const void *vaddr)
 {
-  if (vaddr == NULL || !is_user_vaddr (vaddr)||pagedir_get_page (thread_current ()->pagedir, vaddr) == NULL)
-    {
-      thread_current ()->exit_status = -1;
-      thread_exit ();
-    }
+  const char *p = (const char *)vaddr;
+  int i;
+  for (i = 0; i < 4; i++)
+     if (p + i == NULL || !is_user_vaddr (p + i) ||
+          pagedir_get_page (thread_current ()->pagedir, p + i) == NULL)
+        {
+          thread_current ()->exit_status = -1;
+          thread_exit ();
+        }
+}
+
+static void
+check_valid_range (const void *vaddr, size_t size)
+{
+  size_t i;
+  for (i = 0; i < size; i++)
+    check_valid_ptr ((const char *)vaddr + i);
 }
 
 /* ADIM 4: Sistem Çağrısı Seçici Altyapısı (Handler) */
@@ -43,6 +55,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   /* Kullanıcı yığıtının (stack pointer) geçerli bir adreste olduğunu kontrol et */
   check_valid_ptr (f->esp);
+  check_valid_ptr ((char *)f->esp + 3);
 
   /* Yığıtın en tepesinden sistem çağrısının numarasını oku */
   int syscall_num = *(int *)f->esp;
@@ -103,7 +116,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       check_valid_ptr (f->esp + 4);
       const char *cmd_line = *(char **)(f->esp + 4);
       check_valid_ptr (cmd_line);
-
+f->eax = process_execute(cmd_line);
             break;
 
 
@@ -167,7 +180,12 @@ case SYS_READ:
     unsigned size = *(unsigned *)(f->esp + 12);
 
     check_valid_ptr(buffer);
-    check_valid_ptr(buffer + size - 1); // Buffer'ın tamamının geçerli olduğunu doğrula
+    
+if (size > 0)
+    check_valid_ptr((char *)buffer + size - 1);
+
+
+
 
     if (fd == 0) { // STDIN'den okuma
         uint8_t *buf = (uint8_t *)buffer;
@@ -211,7 +229,7 @@ f->eax = bytes_read;
             putbuf(buffer, size);
             f->eax = size;
         } 
-        else if (fd >= 2 && fd <127) { // Dosyaya yazma durumu
+        else if (fd >= 2 && fd <128) { // Dosyaya yazma durumu
             struct thread *t = thread_current();
             // Burada FD tablonu kontrol etmen lazım
             if (t->fd_table[fd] != NULL) {
@@ -224,6 +242,54 @@ f->eax = bytes_read;
         } else {
             f->eax = -1;
         }
+        break;
+      }
+
+case SYS_FILESIZE:
+      {
+        check_valid_ptr(f->esp + 4);
+        int fs_fd = *(int *)(f->esp + 4);
+        struct thread *t = thread_current();
+        if (fs_fd >= 2 && fs_fd < 128 && t->fd_table[fs_fd] != NULL)
+          {
+            lock_acquire(&filesys_lock);
+            f->eax = file_length(t->fd_table[fs_fd]);
+            lock_release(&filesys_lock);
+          }
+        else
+          f->eax = -1;
+        break;
+      }
+
+    case SYS_SEEK:
+      {
+        check_valid_ptr(f->esp + 4);
+        check_valid_ptr(f->esp + 8);
+        int sk_fd = *(int *)(f->esp + 4);
+        unsigned position = *(unsigned *)(f->esp + 8);
+        struct thread *t = thread_current();
+        if (sk_fd >= 2 && sk_fd < 128 && t->fd_table[sk_fd] != NULL)
+          {
+            lock_acquire(&filesys_lock);
+            file_seek(t->fd_table[sk_fd], position);
+            lock_release(&filesys_lock);
+          }
+        break;
+      }
+
+    case SYS_TELL:
+      {
+        check_valid_ptr(f->esp + 4);
+        int tl_fd = *(int *)(f->esp + 4);
+        struct thread *t = thread_current();
+        if (tl_fd >= 2 && tl_fd < 128 && t->fd_table[tl_fd] != NULL)
+          {
+            lock_acquire(&filesys_lock);
+            f->eax = file_tell(t->fd_table[tl_fd]);
+            lock_release(&filesys_lock);
+          }
+        else
+          f->eax = -1;
         break;
       }
     default:

@@ -1,4 +1,5 @@
 #include "userprog/process.h"
+#include "threads/malloc.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -26,6 +27,30 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
+struct find_thread_aux {
+  tid_t tid;
+  struct thread *found;
+};
+static void
+find_thread_by_tid (struct thread *t, void *aux)
+{
+  struct find_thread_aux *data = aux;
+  if (t->tid == data->tid)
+    data->found = t;
+
+}
+
+/* process.c başına ekle - start_process'e geçmek için */
+struct exec_aux {
+  char *fn_copy;
+  struct child_info *ci;
+  struct semaphore load_sema;  /* load tamamlanana kadar parent bekler */
+  bool load_success;
+tid_t parent_tid;  
+};
+
+
+
 tid_t
 process_execute (const char *file_name)
 {
@@ -47,22 +72,58 @@ process_execute (const char *file_name)
   strlcpy (name_copy, file_name, PGSIZE);
   char *save_ptr;
   char *prog_name = strtok_r (name_copy, " ", &save_ptr);
- 
-  tid = thread_create (prog_name, PRI_DEFAULT, start_process, fn_copy);
- 
+
+ struct child_info *ci = malloc (sizeof *ci);
+  if (ci == NULL)
+    {
+      palloc_free_page (fn_copy);
+      palloc_free_page (name_copy);
+      return TID_ERROR;
+    }
+  ci->exit_status = -1;
+  ci->waited = false;
+ ci->tid = TID_ERROR;
+  sema_init (&ci->wait_sema, 0);
+
+struct exec_aux aux;
+  aux.fn_copy = fn_copy;
+  aux.ci = ci;
+  aux.load_success = false;
+  sema_init (&aux.load_sema, 0);
+aux.parent_tid = thread_current()->tid;
+
+  tid = thread_create (prog_name, PRI_DEFAULT, start_process, &aux);
   palloc_free_page (name_copy);
- 
-  if (tid == TID_ERROR)
+
+
+  if (tid == TID_ERROR){
     palloc_free_page (fn_copy);
-  return tid;
+ free (ci);
+      return TID_ERROR;
+    }
+ci->tid = tid; 
+  list_push_back (&thread_current ()->children, &ci->elem);  
+sema_down (&aux.load_sema);
+
+if (!aux.load_success)
+    {
+list_remove (&ci->elem); 
+      free (ci);
+      return TID_ERROR;
+    }
+return tid;
+  
 }
  
 /* A thread function that loads a user process and starts it running. */
 static void
-start_process (void *file_name_)
+start_process (void *aux_)
 {
-  char *file_name = file_name_;
-  struct intr_frame if_;
+  struct exec_aux *aux = aux_;
+  char *file_name = aux->fn_copy;
+  
+  thread_current()->parent_tid = aux->parent_tid;
+struct intr_frame if_;
   bool success;
  
   memset (&if_, 0, sizeof if_);
@@ -70,8 +131,10 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
- 
-  palloc_free_page (file_name);
+ palloc_free_page (file_name);
+aux->load_success = success;
+  sema_up (&aux->load_sema);
+
   if (!success)
     thread_exit ();
  
@@ -84,7 +147,20 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED)
 {
-  timer_sleep (300);
+struct list_elem *e;
+for (e = list_begin(&thread_current()->children);
+     e != list_end(&thread_current()->children);
+     e = list_next(e))
+{
+  struct child_info *child = list_entry(e, struct child_info,elem);
+  if (child->tid == child_tid) {
+     if (child->waited)
+            return -1;
+          child->waited = true;
+          sema_down(&child->wait_sema);
+          return child->exit_status;  }
+}
+
   return -1;
 }
  
@@ -93,10 +169,44 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  //printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
-  uint32_t *pd;
- 
-  pd = cur->pagedir;
+  printf ("%s: exit(%d)\n", cur->name, cur->exit_status);
+
+int i;
+  for (i = 2; i < 128; i++)
+    {
+      if (cur->fd_table[i] != NULL)
+        {
+          file_close (cur->fd_table[i]);
+          cur->fd_table[i] = NULL;
+        }
+    }
+
+if (cur->exec_file != NULL) { file_close (cur->exec_file); cur->exec_file = NULL; }
+struct find_thread_aux aux;
+  aux.tid = cur->parent_tid;
+  aux.found = NULL;
+  enum intr_level old_level = intr_disable ();
+  thread_foreach (find_thread_by_tid, &aux);
+  intr_set_level (old_level);
+
+  if (aux.found != NULL)
+    {
+      struct list_elem *e;
+      for (e = list_begin (&aux.found->children);
+           e != list_end (&aux.found->children);
+           e = list_next (e))
+        {
+          struct child_info *ci = list_entry (e, struct child_info, elem);
+          if (ci->tid == cur->tid)
+            {
+              ci->exit_status = cur->exit_status;
+              sema_up (&ci->wait_sema);
+              break;
+            }
+        }
+    }
+
+uint32_t *pd = cur->pagedir;
   if (pd != NULL)
     {
       cur->pagedir = NULL;
@@ -104,7 +214,8 @@ process_exit (void)
       pagedir_destroy (pd);
     }
 }
- 
+
+
 /* Sets up the CPU for running user code in the current thread. */
 void
 process_activate (void)
@@ -363,8 +474,17 @@ load (const char *file_name, void (**eip) (void), void **esp)
   success = true;
  
  done:
+
+if (success)
+    {
+      file_deny_write (file);
+      thread_current ()->exec_file = file;
+    }
+else
   file_close (file);
   return success;
+
+
 }
  
 /* load() helpers */

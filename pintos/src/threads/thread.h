@@ -80,11 +80,22 @@ typedef int tid_t;
    semaphore wait list (synch.c).  It can be used these two ways
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
-   blocked state is on a semaphore wait list. */
+nano thread.h   blocked state is on a semaphore wait list. */
+
+struct child_info {
+  tid_t tid;
+  int exit_status;
+  bool waited;
+  struct semaphore wait_sema;
+  struct list_elem elem;
+};
+
 struct thread
   {
     /* Owned by thread.c. */
-    tid_t tid;                          /* Thread identifier. */
+    tid_t tid;                      /* Thread identifier. */
+struct list children;        /* child_info listesi */
+tid_t parent_tid;
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
@@ -93,10 +104,10 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    struct semaphore exit_sema;
-    int exit_status; /* Sürecin bitiş kodunu tutmak için */
+      int exit_status; /* Sürecin bitiş kodunu tutmak için */
     struct file *fd_table[128]; /* Dosya tanımlayıcı tablosu (File Descriptor Table) */
     int next_fd;                /* Bu thread'in bir sonraki boş FD numarası */
+    struct file *exec_file;         /* Çalışan executable dosyası */
 
 
 #ifdef USERPROG
