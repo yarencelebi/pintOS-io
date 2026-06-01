@@ -1,5 +1,6 @@
 #include "userprog/syscall.h"
 #include "pagedir.h"
+#include "devices/input.h"
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "threads/interrupt.h"
@@ -31,7 +32,6 @@ check_valid_ptr (const void *vaddr)
 {
   if (vaddr == NULL || !is_user_vaddr (vaddr)||pagedir_get_page (thread_current ()->pagedir, vaddr) == NULL)
     {
-      /* Artık printf yok. Sadece durumu -1 yap ve çık. process_exit mesajı basacak. */
       thread_current ()->exit_status = -1;
       thread_exit ();
     }
@@ -68,6 +68,7 @@ syscall_handler (struct intr_frame *f UNUSED)
           struct thread *cur = thread_current ();
           if (cur->next_fd < 128)
             {
+	      
               cur->fd_table[cur->next_fd] = opened_file;
               f->eax = cur->next_fd; /* Programcıya dosya numarasını döndür */
               cur->next_fd++;
@@ -103,9 +104,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       const char *cmd_line = *(char **)(f->esp + 4);
       check_valid_ptr (cmd_line);
 
-      /* Yeni süreci başlat ve thread/süreç id'sini geri döndür */
-      f->eax = process_execute (cmd_line);
-      break;
+            break;
 
 
 	case SYS_WAIT:
@@ -150,11 +149,51 @@ syscall_handler (struct intr_frame *f UNUSED)
   check_valid_ptr (f->esp + 4);
     int status = *(int *)(f->esp + 4);
     thread_current ()->exit_status = status;
-printf ("%s: exit(%d)\n", thread_current ()->name, status); //testlerin dogru okuyabilmesi için
+
 
   /* <-- BU SATIR EKSİKTİ */
     thread_exit ();
 	break;
+
+
+case SYS_READ:
+{
+    check_valid_ptr((void *)(f->esp + 4));
+    check_valid_ptr((void *)(f->esp + 8));
+    check_valid_ptr((void *)(f->esp + 12));
+
+    int fd = *(int *)(f->esp + 4);
+    void *buffer = *(void **)(f->esp + 8);
+    unsigned size = *(unsigned *)(f->esp + 12);
+
+    check_valid_ptr(buffer);
+    check_valid_ptr(buffer + size - 1); // Buffer'ın tamamının geçerli olduğunu doğrula
+
+    if (fd == 0) { // STDIN'den okuma
+        uint8_t *buf = (uint8_t *)buffer;
+        for (unsigned i = 0; i < size; i++) {
+            buf[i] = input_getc();
+        }
+        f->eax = size;
+    } 
+    else if (fd >= 2 && fd < 128) { // Dosyadan okuma
+        struct thread *t = thread_current();
+        if (t->fd_table[fd] != NULL) {
+            lock_acquire(&filesys_lock);
+	int bytes_read = file_read(t->fd_table[fd], buffer, size);
+lock_release(&filesys_lock);
+
+f->eax = bytes_read;
+            
+        } else {
+            f->eax = -1;
+        }
+    } else {
+        f->eax = -1;
+    }
+    break;
+}
+
 
 
     case SYS_WRITE:
@@ -172,7 +211,7 @@ printf ("%s: exit(%d)\n", thread_current ()->name, status); //testlerin dogru ok
             putbuf(buffer, size);
             f->eax = size;
         } 
-        else if (fd >= 2) { // Dosyaya yazma durumu
+        else if (fd >= 2 && fd <127) { // Dosyaya yazma durumu
             struct thread *t = thread_current();
             // Burada FD tablonu kontrol etmen lazım
             if (t->fd_table[fd] != NULL) {
@@ -188,9 +227,7 @@ printf ("%s: exit(%d)\n", thread_current ()->name, status); //testlerin dogru ok
         break;
       }
     default:
-      /* Bilinmeyen bir çağrı gelirse sistemi çökertmemek için süreci kapat */
-      printf ("%s: exit(-1)\n", thread_current ()->name);
-      thread_exit ();
+     thread_exit ();
       break;
     }
 }
