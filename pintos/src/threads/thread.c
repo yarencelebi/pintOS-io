@@ -666,7 +666,7 @@ sema_init (&t->exit_sema, 0);
     {
       t->fd_table[i] = NULL;
     }
-  t->next_fd = 2;
+  t->next_fd = 3;
 
 }
 
